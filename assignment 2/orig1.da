@@ -1,0 +1,106 @@
+import sys
+import random
+
+config(channel is fifo, clock is lamport)
+
+class P(process):
+    def setup(s: set, nrequests: int):  # s is set of all other processes
+        self.q = set()
+        self.request_counter =0
+        self.release_counter = 0
+        self.cs_counter = 0
+    
+    def mutex(task):
+        c = logical_clock()
+        request_counter += 1
+        output('Request!!')
+        send(('request', c, self), to=s)
+        q.add(('request', c, self))
+
+    def cs(task):
+        c = sys.maxsize
+        for x in q:
+            if (x[2] == self and c > x[1]):
+                c = x[1]
+                min_val = x
+        if(await(each(('request', c2, p) in q,
+                      has=(c2, p) == (c, self) or (c, self) < (c2, p)) and
+                 each(p in s, has=some(received(('ack', c2, _p)), has=c2 > c)))):          
+            if cs_counter<request_counter:
+                task()
+                cs_counter+=1
+
+                
+       
+    def release(task):
+        #list_of_processes = list(q)
+        #any_process = random.choice(list_of_processes)
+        #q.remove('request', any_process, self)
+        if cs_counter>release_counter:
+            for x in setof(('request', c, self), ('request', c, self) in q):
+                q.remove(x)
+                output('release', x)
+                release_counter +=1
+                send(('release', logical_clock(), self), to= s)
+                break
+
+        
+
+        
+    def receive(msg=('request', c2, p)):
+        q.add(('request', c2, p))
+        send(('ack', logical_clock(), self), to=p)
+
+    def receive(msg=('release', _, p)):
+        #        q.remove(('request', _, p))  # pattern matching needed for _
+        #        q.remove(anyof(setof(('request', c, p), ('request', c, _p) in q)))
+        for x in setof(('request', c, p), ('request', c, _p) in q):
+            q.remove(x)
+            break
+
+    #        for ('request', c, _p) in q: q.remove('request', c, p); break
+    #        for (tag, c, p2) in q:
+    #            if tag == 'request' and p2 == p:
+    #                q.remove((tag, c, p2)); break
+
+    def run():
+        def task():
+            output('in cs')
+
+        actions = []
+        actions.append(mutex)
+        actions.append(release)
+        actions.append(cs)
+        clock = []
+        count=1
+        while request_counter==0 or request_counter!=release_counter:
+            if request_counter>nrequests:
+                continue
+            j = random.choice(actions)
+            j(task)
+            count+=1
+        send(('done', self), to=parent())
+        await(received(('done',), from_=parent()))
+        output('terminating')
+
+
+def main():
+    nprocs = int(sys.argv[1]) if len(sys.argv) > 1 else 10
+    nrequests = int(sys.argv[2]) if len(sys.argv) > 2 else 1
+
+    ps = new(P, num=nprocs)
+    for p in ps: setup(p, (ps - {p}, nrequests))
+    start(ps)
+    await(each(p in ps, has=received(('done', p))))
+    send(('done',), to=ps)
+
+# This is an executable specification of the algorithm described in
+# Lamport, L. (1978). "Time, clocks, and the ordering of events in a
+# distributed system".  Communications of the ACM, 21(7):558-565.
+
+# This code includes setup and termination for serving a given number of
+# requests per process.
+
+# All labels are not needed,
+# leaving 14 or 15 lines total for the algorithm body and message handlers.
+
