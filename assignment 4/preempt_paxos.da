@@ -1,0 +1,107 @@
+#Shivanshi Gupta - 112079392 - preempt_paxos.da
+import sys
+from random import randint
+from numpy.random import choice
+import copy
+import time
+TIMEOUT = 1
+
+class Proposer(process):
+    def setup(acceptors:set, monitor:Monitor, tp:int, nLossRate:float, nDelay: int, nWaitTime: int):
+        self.n = None              # proposal number
+        self.majority = acceptors  # majority of acceptors; all in other papers
+
+    def Loss():
+        modifiedmajority=set()
+        majorityList = list(majority)
+        rndmdraw = [int(choice((0,1), 1, p= [nLossRate, 1 - nLossRate], replace= False)) for i in range(len(majority))]
+        for i,j in enumerate(rndmdraw):
+            if j==1:
+                modifiedmajority.add(majorityList[i])
+        return modifiedmajority
+
+    def to_consent():
+        n = (0, self) if n == None else (n[0]+1, self)  # pick a prop num
+        modifiedmajority = Loss()
+        delayint = int(nDelay)
+        delay = randint(0, delayint)
+        time.sleep(delay)
+
+        send(('prepare', n), to= modifiedmajority)
+
+        if await(len(setof(a, received(('respond', _n, _), from_ =a)))
+                 > len(acceptors)/2):
+            v = anyof(setof(v, received(('respond', _n, (n2, v))),
+                            n2==max(setof(n2, received(('respond', _n, (n2, _))))))
+                      or {randint(1,100)})  # any value, pick in 1..100
+            responded = setof(a, received(('respond', _n, _), from_ =a))
+            
+            send(('accept', n, v), to= responded)
+
+            send(('ProposedValue', n, v), to=  monitor)
+
+            time.sleep(nWaitTime)
+        # preempt added :  if the value of proposal is not greater than the previous value, then send preempt.
+        elif (some(received(('preempt', n2)), has= n2 > n)):
+            return
+
+        elif timeout(tp):
+            output('failed proposal number', n)
+            time.sleep(nWaitTime)
+
+
+    def run():
+        while not received(('done',)):
+            to_consent()
+
+    def anyof(s):
+        return next(iter(s)) if s else None
+
+class Acceptor(process):
+    def setup(learners:set, monitor:Monitor, nDelay: int): pass
+
+    def receive(msg= ('prepare', n), from_= p):
+        n2 = anyof(setof(n2, received(('respond', n2, _)), n2 > n))
+        if each(sent(('respond', n2, _)), has= n > n2):
+            maxprop = anyof(setof((n, v), sent(('accepted', n, v)),
+                               n==max(setof(n, sent(('accepted', n, _))))))
+            send(('respond', n, maxprop), to =p)
+        else:
+            send(('preempt', n2), to =p)
+
+    def receive(msg= ('accept', n, v)):
+        if not some(sent(('respond', n2, _)), has= n2 > n):
+            send(('accepted', n, v), to= learners)
+        else: pass
+
+    def run():
+        await(received(('done',)))
+
+    def anyof(s):
+        return next(iter(s)) if s else None
+
+class Learner(process):
+    def setup(acceptors:set, monitor:Monitor, tl:int):pass
+
+    def learn():
+        if await(some(received(('accepted', n, v)),
+                      has= len(setof(a, received(('accepted', _n, _v), from_=a)))
+                           > len(acceptors)/2)):
+            output('learned', n, v)
+            send(('learned', n, v), to= monitor)
+
+        elif timeout(tl):
+            output('failed learning anything')
+
+    def run():
+        learn()
+        send(('learned', ), to=nodeof(self))
+
+
+
+# This is an executable specification of the algorithm described in
+# Lamport, L. (2001).  Paxos Made Simple.  ACM SIGACT News 
+# (Distributed Computing Column), 32(4):51-58, December.
+
+# This code includes setup and termination for running repeated rounds until
+# the learners all terminate after learning the consent value or timeout.

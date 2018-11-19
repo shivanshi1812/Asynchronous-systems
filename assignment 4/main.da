@@ -1,0 +1,331 @@
+#Shivanshi Gupta - 112079392 - main.da
+
+import sys
+import os
+import random
+import time
+import matplotlib.pyplot as plot1
+import matplotlib.pyplot as plot2
+import numpy as np
+from statistics import stdev
+from subprocess import call
+BasicPaxos = import_da('basic_paxos')
+PreemptPaxos = import_da('preempt_paxos')
+
+class Monitor(process):
+    def setup(learners:set, acceptors:set, proposers:set):
+        self.proposerVal = set()
+        self.acceptedVal = set()
+        self.learnerVal = set()
+
+    def run():
+        -- yieldpt
+        await(received(('done',), from_= parent()))
+        agreementCheck()
+        validityCheck()
+        terminationCheck()
+        output('terminating')
+
+    def receive (msg= ('learned', n, v), from_=p):
+        if p in learners:
+            learnerVal.add(v)
+
+    
+    def receive (msg= ('ProposedValue', n, v), from_=p):
+        if p in proposers:
+            proposerVal.add(v)
+
+    def receive (msg= ('AcceptedValue', n, v), from_=p):
+        if p in acceptors:
+            acceptedVal.add(v)
+
+    def agreementCheck():
+        if len(learnerVal) == 1:
+            print('Agreement is existing')
+        else:
+            print('Agreement is violated')
+
+    def validityCheck():
+        if proposerVal >= learnerVal:
+            print('Validity is existing')     
+        else:
+            print('Validity is violated')
+
+    def terminationCheck():
+        if len(learnerVal) != 0:
+            print('Temination is existing')
+        else:
+            print('Termination failed')
+
+def main():
+    nacceptors = int(sys.argv[1]) if len(sys.argv) > 1 else 3
+    nproposers = int(sys.argv[2]) if len(sys.argv) > 2 else 2
+    nlearners  = int(sys.argv[3]) if len(sys.argv) > 3 else 2
+    nruns       = int(sys.argv[4]) if len(sys.argv) > 4 else 2
+    nmessagelossrate  = float(sys.argv[5]) if len(sys.argv) > 5 else 0.5
+    nmessageDelay     = int(sys.argv[6]) if len(sys.argv) > 6 else 5
+    nwaitaroundtime  = int(sys.argv[7]) if len(sys.argv) > 7 else 5 
+    ntimeoutproposers        = int(sys.argv[8]) if len(sys.argv) > 8 else 1
+    ntimeoutlearners        = int(sys.argv[9]) if len(sys.argv) > 9 else 10
+    
+    cpuStartTime, cpuEndTime, elapsedStartTime, elapsedEndTime = 0, 0, 0, 0
+
+    #To make different ranges of nmessagelossrateWhole, nmessagelossrateValue, nmessageDelayValue, nwaitValue we will
+    #divide the numbers by 100,5,5,5 respectively. This will give us a different values everytime.
+
+    nmessagelossrateWhole= int (nmessagelossrate*100)
+    nmessagelossrateValue = int(nmessagelossrateWhole/5)
+    CPULossRate = {}
+    ElapsedLossRate = {}
+    nmessageDelayValue=int(nmessageDelay/5)
+    nwaitValue=int(nwaitaroundtime/5)
+    CPULossRate = {}
+    ElapsedLossRate = {}
+    
+    if not os.path.exists("message_loss_results"):
+        os.mkdir("message_loss_results")
+    plot1.figure(1)
+    plot2.figure(2)
+
+    AlgoList = [BasicPaxos, PreemptPaxos]
+
+    for algo in AlgoList:
+        CPULossRate = {}
+        ElapsedLossRate = {}
+        CPU_Times_StandardDeviation = []
+        Elapsed_times_StandardDeviation = []
+        sde_time_cpu = {}
+        sde_elapsed_time = {}
+        for nLossValue in range(nmessagelossrateValue, nmessagelossrateWhole+1, nmessagelossrateValue):
+            cpuTime, elapsedTime = 0, 0
+            for i in range(nruns):
+
+                monitor   = new(Monitor, num=1)
+                acceptors = new(algo.Acceptor, num= nacceptors)
+                proposers = new(algo.Proposer, (acceptors, monitor, ntimeoutproposers, nLossValue/100, nmessageDelayValue, nwaitValue), num= nproposers)
+                learners  = new(algo.Learner, num= nlearners)
+
+                setup(monitor, (learners, acceptors, proposers))
+                start(monitor)
+
+                for p in acceptors: setup(p, (learners, monitor, nmessageDelayValue))
+                for p in learners: setup(p, (acceptors, monitor, ntimeoutlearners))
+
+                #Calculate CPU and ELAPSE time at the start itself
+                cpuStartTime     =  time.process_time()
+                elapsedStartTime =  time.time()
+
+                start(acceptors | proposers | learners)
+                await(each(l in learners, has=received(('learned',), from_=l)))
+
+                send(('done',), to= (acceptors|proposers))
+
+                cpuEndTime     = time.process_time()
+                elapsedEndTime = time.time()
+
+                #Calculating total elapsed time and CPU time by subtracting end time and start time
+
+                cpuTime     += cpuEndTime - cpuStartTime
+                elapsedTime += elapsedEndTime - elapsedStartTime
+                CPU_Times_StandardDeviation.append(cpuTime)
+                Elapsed_times_StandardDeviation.append(elapsedTime)
+
+                send(('done',), to= monitor)
+
+            cpuTime=float(cpuTime/nruns)
+            elapsedTime=float(elapsedTime/nruns)
+            CPULossRate[nLossValue/100]=cpuTime
+            ElapsedLossRate[nLossValue/100]=elapsedTime
+            sde_time_cpu[nLossValue/100] = stdev(CPU_Times_StandardDeviation)  
+            sde_elapsed_time[nLossValue/100] = stdev(Elapsed_times_StandardDeviation)
+
+        if algo == BasicPaxos:
+            print("BASIC PAXOS:")
+        else:
+            print("BASIC PAXOS WITH PREEMPTION:")
+        print("CPU LOSS TIME FOR MESSAGE LOSS", CPULossRate)
+        print("ELAPSED LOSS TIME FOR MESSAGE LOSS", ElapsedLossRate)
+        print("STANDARD DEVIATION OF CPU TIME FOR MESSAGE LOSS" , sde_time_cpu)
+        print("STANDARD DEVIATION OF ELAPSED TIME FOR MESSAGE LOSS" , sde_elapsed_time)
+
+        #Plotting graphs with CPU Loss rate and Elapsed Loss Rate
+        list1= sorted(CPULossRate.items()) # sort by keys
+        x, y = zip(*list1)
+        plot1.xlabel('Message Loss Rate', fontsize=18)
+        plot1.ylabel('Time', fontsize=16)
+        plot1.plot(x, y, label="MessageLossRateAvgCPUTime")
+
+        lists2 = sorted(ElapsedLossRate.items()) # sorted by key, return a list of tuples
+        a, b = zip(*lists2) # unpack a list of pairs into two tuples
+        plot1.xlabel('Message Loss Rate', fontsize=18)
+        plot1.ylabel('Time', fontsize=16)
+        plot2.plot(a, b, label="MessageLossRateAvgElapsedime")
+
+    plot1.legend(["BasicPaxosCPUTime", "BasicPaxosELAPSEDTime", "PremeptionCPUTime", "PreemptionELAPSEDTime"], loc = "upper left",prop= {'size':5})
+    savedFileName = 'message_loss_results/' + 'messageLossRate.png'
+    plot1.savefig(savedFileName)
+
+
+    #======================================================================================
+    #=======================================================================================
+
+    if not os.path.exists("message_delay_results"):
+        os.mkdir("message_delay_results")
+    plot1.figure()
+    plot2.figure()
+    for algo in AlgoList:
+        CPULossRate = {}
+        ElapsedLossRate = {}
+        for nmessageDelayValue in range(nmessageDelayValue, nmessageDelay+1, nmessageDelayValue):
+            cpuTime, elapsedTime = 0, 0
+            for i in range(nruns):
+
+                monitor   = new(Monitor, num=1)
+                acceptors = new(algo.Acceptor, num= nacceptors)
+                proposers = new(algo.Proposer, (acceptors, monitor, ntimeoutproposers, nmessagelossrateValue/100, nmessageDelayValue, nwaitValue), num= nproposers)
+                learners  = new(algo.Learner, num= nlearners)
+
+                setup(monitor, (learners,acceptors, proposers))
+                start(monitor)
+
+                for p in acceptors: setup(p, (learners, monitor, nmessageDelayValue))
+                for p in learners: setup(p, (acceptors, monitor, ntimeoutlearners))
+
+                #Calculate CPU and ELAPSE time
+                cpuStartTime     =  time.process_time()
+                elapsedStartTime =  time.time()
+
+                start(acceptors | proposers | learners)
+                await(each(l in learners, has=received(('learned',), from_=l)))
+
+                send(('done',), to= (acceptors|proposers))
+
+                cpuEndTime     = time.process_time()
+                elapsedEndTime = time.time()
+
+                #Calculate SPU time and Elapsed time by subtracting both start and end values
+
+                cpuTime     += cpuEndTime - cpuStartTime
+                elapsedTime += elapsedEndTime - elapsedStartTime
+                CPU_Times_StandardDeviation.append(cpuTime)
+                Elapsed_times_StandardDeviation.append(elapsedTime)
+
+                send(('done',), to= monitor)
+
+            cpuTime=float(cpuTime/nruns)
+            elapsedTime=float(elapsedTime/nruns)
+            CPULossRate[nmessageDelayValue]=cpuTime
+            ElapsedLossRate[nmessageDelayValue]=elapsedTime
+            sde_time_cpu[nmessageDelayValue] = stdev(CPU_Times_StandardDeviation)  
+            sde_elapsed_time[nmessageDelayValue] = stdev(Elapsed_times_StandardDeviation)
+        
+        if algo == BasicPaxos:
+            print("BASIC PAXOS:")
+        else:
+            print("BASIC PAXOS WITH PREEMPTION:")
+        print("CPU LOSS TIME FOR MESSAGE LOSS", CPULossRate)
+        print("ELAPSED LOSS TIME FOR MESSAGE LOSS", ElapsedLossRate)
+        print("STANDARD DEVIATION OF CPU TIME FOR MESSAGE DELAY" , sde_time_cpu)
+        print("STANDARD DEVIATION OF ELAPSED TIME FOR MESSAGE DELAY" , sde_elapsed_time)
+
+        list1= sorted(CPULossRate.items()) # sorted by key, return a list of tuples
+        x, y = zip(*list1) # unpack a list of pairs into two tuples
+        plot1.xlabel('Message Delay Rate', fontsize=18)
+        plot1.ylabel('Time', fontsize=16)
+        plot1.plot(x, y, label="MessageDelayAvgCPUTime")
+    
+        lists2 = sorted(ElapsedLossRate.items()) # sorted by key, return a list of tuples
+        a, b = zip(*lists2) # unpack a list of pairs into two tuples
+        plot1.xlabel('Message Delay Rate', fontsize=18)
+        plot1.ylabel('Time', fontsize=16)
+        plot2.plot(a, b, label="MessageDelayAvgElapsedTime")
+
+    #plot1.ylim[0, 0.75]
+    plot1.legend(["BasicPaxosCPUTime", "BasicPaxosELAPSEDTime", "PremeptionCPUTime", "PreemptionELAPSEDTime"], loc = "upper left",prop= {'size':5})
+    savedFileName = 'message_delay_results/' + 'MessageDelay.png'
+    plot1.savefig(savedFileName)
+
+    #================================================================================================
+    #===============================================================================================
+
+    if not os.path.exists("message_wait_results"):
+        os.mkdir("message_wait_results")
+    plot1.figure()
+    plot2.figure()
+    for algo in AlgoList:
+        CPULossRate = {}
+        ElapsedLossRate = {}
+        for nWaitValue in range(nwaitValue, nwaitaroundtime+1, nwaitValue):
+            cpuTime, elapsedTime = 0, 0
+            for i in range(nruns):
+
+                monitor   = new(Monitor, num=1)
+                acceptors = new(algo.Acceptor, num= nacceptors)
+                proposers = new(algo.Proposer, (acceptors, monitor, ntimeoutproposers, nmessagelossrateValue/100, nmessageDelayValue, nWaitValue), num= nproposers)
+                learners  = new(algo.Learner, num= nlearners)
+
+                setup(monitor, (learners,acceptors, proposers))
+                start(monitor)
+
+                for p in acceptors: setup(p, (learners, monitor, nmessageDelayValue))
+                for p in learners: setup(p, (acceptors, monitor, ntimeoutlearners))
+
+                #Calculate CPU and ELAPSE time
+                cpuStartTime     =  time.process_time()
+                elapsedStartTime =  time.time()
+                #output(cpuStartTime, elapsedStartTime)
+
+                start(acceptors | proposers | learners)
+                await(each(l in learners, has=received(('learned',), from_=l)))
+
+                #output('done')
+                send(('done',), to= (acceptors|proposers))
+
+                cpuEndTime     = time.process_time()
+                elapsedEndTime = time.time()
+                #output(cpuEndTime, elapsedEndTime)
+
+                cpuTime     += cpuEndTime - cpuStartTime
+                elapsedTime += elapsedEndTime - elapsedStartTime
+                CPU_Times_StandardDeviation.append(cpuTime)
+                Elapsed_times_StandardDeviation.append(elapsedTime)
+                #output(cpuEndTime, elapsedEndTime)
+
+                send(('done',), to= monitor)
+                #print ("Done sent to monitor")
+
+            cpuTime=float(cpuTime/nruns)
+            elapsedTime=float(elapsedTime/nruns)
+            CPULossRate[nWaitValue]=cpuTime
+            ElapsedLossRate[nWaitValue]=elapsedTime
+            sde_time_cpu[nWaitValue] = stdev(CPU_Times_StandardDeviation)  
+            sde_elapsed_time[nWaitValue] = stdev(Elapsed_times_StandardDeviation)
+
+        if algo == BasicPaxos:
+            print("BASIC PAXOS:")
+        else:
+            print("BASIC PAXOS WITH PREEMPTION:")
+        print("CPU LOSS TIME FOR MESSAGE LOSS", CPULossRate)
+        print("ELAPSED LOSS TIME FOR MESSAGE LOSS", ElapsedLossRate)
+        print("STANDARD DEVIATION OF CPU TIME FOR WAIT TIME" , sde_time_cpu)
+        print("STANDARD DEVIATION OF ELAPSED TIME FOR WAIT TIME" , sde_elapsed_time)
+
+        list1= sorted(CPULossRate.items()) # sorted by key, return a list of tuples
+        x, y = zip(*list1) # unpack a list of pairs into two tuples
+        plot1.xlabel('Wait Around Rate', fontsize=18)
+        plot1.ylabel('Time', fontsize=16)
+        plot1.plot(x, y, label="WaitDelayAvgCPUTime")
+    
+        lists2 = sorted(ElapsedLossRate.items()) # sorted by key, return a list of tuples
+        a, b = zip(*lists2) # unpack a list of pairs into two tuples
+        plot1.xlabel('Wait Around Rate', fontsize=18)
+        plot1.ylabel('Time', fontsize=16)
+        plot2.plot(a, b, label="WaitDelayAvgELAPSEDTime")
+
+    #plot1.ylim[0, 0.75]
+    plot1.legend(["BasicPaxosCPUTime", "BasicPaxosELAPSEDTime", "PremeptionCPUTime", "PreemptionELAPSEDTime"], loc = "upper left",prop= {'size':5})
+    savedFileName = 'message_wait_results/' + 'WaitDelay1.png'
+    plot1.savefig(savedFileName)
+     
+
+  
